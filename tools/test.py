@@ -123,7 +123,8 @@ def main():
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
 
-    cfg.model.pretrained = None
+    if cfg.model.type != 'Mask2Former':
+        cfg.model.pretrained = None
     if cfg.model.get('neck'):
         if isinstance(cfg.model.neck, list):
             for neck_cfg in cfg.model.neck:
@@ -209,7 +210,7 @@ def main():
     if rank == 0:
         if args.out:
             print(f'\nwriting results to {args.out}')
-            mmcv.dump(outputs, args.out)
+            # mmcv.dump(outputs, args.out)
         kwargs = {} if args.eval_options is None else args.eval_options
         if args.format_only:
             dataset.format_results(outputs, **kwargs)
