@@ -28,7 +28,7 @@ if version.parse(torchvision.__version__) < version.parse('0.7'):
 
 
 @HEADS.register_module()
-class MyHead(AnchorFreeHead):
+class PsgMaskHead(AnchorFreeHead):
 
     _version = 2
 
@@ -280,7 +280,7 @@ class MyHead(AnchorFreeHead):
                                           strict, missing_keys,
                                           unexpected_keys, error_msgs)
 
-    def forward_head(self, decoder_out, memory, masks, batch_size, feats, last_features, rescale_rate):
+    def forward_head(self, decoder_out, memory, masks, batch_size, last_features):
         """Forward for head part which is called after every decoder layer.
 
         Args:
@@ -292,15 +292,9 @@ class MyHead(AnchorFreeHead):
         Returns:
             tuple: A tuple contain three elements.
 
-            - cls_pred (Tensor): Classification scores in shape \
-                (batch_size, num_queries, cls_out_channels). \
-                Note `cls_out_channels` should includes background.
-            - mask_pred (Tensor): Mask scores in shape \
-                (batch_size, num_queries,h, w).
             - attn_mask (Tensor): Attention mask in shape \
-                (batch_size * num_heads, num_queries, h, w).
+                (batch_size * num_heads * num_queries, h*w).
         """
-        ###########for segmentation#################
         sub_bbox_mask = self.sub_bbox_attention(decoder_out,
                                                 memory,
                                                 mask=masks)
@@ -308,28 +302,20 @@ class MyHead(AnchorFreeHead):
                                                 memory,
                                                 mask=masks)
         sub_seg_masks = self.sub_mask_head(last_features, sub_bbox_mask,
-                                            [feats[2], feats[1], feats[0]])
-        outputs_sub_seg_masks = sub_seg_masks.view(batch_size,
-                                                    self.num_query,
-                                                    sub_seg_masks.shape[-2],
-                                                    sub_seg_masks.shape[-1])
+                                            None, True)
+        outputs_sub_seg_masks = sub_seg_masks.view(batch_size*self.num_query,
+                                                    sub_seg_masks.shape[-2]*sub_seg_masks.shape[-1])
         obj_seg_masks = self.obj_mask_head(last_features, obj_bbox_mask,
-                                            [feats[2], feats[1], feats[0]])
-        outputs_obj_seg_masks = obj_seg_masks.view(batch_size,
-                                                    self.num_query,
-                                                    obj_seg_masks.shape[-2],
-                                                    obj_seg_masks.shape[-1])
+                                            None, True)
+        outputs_obj_seg_masks = obj_seg_masks.view(batch_size*self.num_query,
+                                                    obj_seg_masks.shape[-2]*obj_seg_masks.shape[-1])
 
         # union_mask = torch.logical_and(sub_mask, obj_mask)
-        union_mask = torch.minimum(outputs_sub_seg_masks, outputs_obj_seg_masks).flatten(0, 1)
-        pooling = nn.MaxPool2d(8, ceil_mode=True) #TODO: changed to rescale rate later?
-        rescaled_mask = pooling(union_mask)
-
-        # TODO: need some rescaling?
-        rescaled_mask = rescaled_mask.sigmoid() < 0.5
-        rescaled_mask = rescaled_mask.detach()
+        union_mask = torch.minimum(outputs_sub_seg_masks, outputs_obj_seg_masks)
+        union_mask = union_mask.sigmoid() < 0.5
+        union_mask = union_mask.detach()
         
-        return rescaled_mask.flatten(1, 2)
+        return union_mask
 
     def forward(self, feats, img_metas):
         # construct binary masks which used for the transformer.
@@ -373,9 +359,8 @@ class MyHead(AnchorFreeHead):
             query_key_padding_mask=mask)
         query = torch.zeros_like(query_embed)
 
-        rescale_rate = input_img_w / w
         attn_mask = self.forward_head(
-                query.transpose(0, 1), memory.permute(1, 2, 0).reshape(bs, c, h, w), masks, batch_size, feats, last_features, rescale_rate)
+                query.transpose(0, 1), memory.permute(1, 2, 0).reshape(bs, c, h, w), masks, batch_size, last_features)
 
         intermediate = []
         for layer in self.transformer.decoder.layers:
@@ -395,7 +380,7 @@ class MyHead(AnchorFreeHead):
                 # here we do not apply masking on padded region
                 key_padding_mask=None)
             attn_mask = self.forward_head(
-                query.transpose(0, 1), memory.permute(1, 2, 0).reshape(bs, c, h, w), masks, batch_size, feats, last_features, rescale_rate)
+                query.transpose(0, 1), memory.permute(1, 2, 0).reshape(bs, c, h, w), masks, batch_size, last_features)
 
             intermediate.append(query)
 
@@ -1192,6 +1177,9 @@ class MLP(nn.Module):
 def _expand(tensor, length: int):
     return tensor.unsqueeze(1).repeat(1, int(length), 1, 1, 1).flatten(0, 1)
 
+# self.sub_mask_head = MaskHeadSmallConv(
+#                     self.embed_dims + self.n_heads, [1024, 512, 256],
+#                     self.embed_dims)
 
 class MaskHeadSmallConv(nn.Module):
     """Simple convolutional head, using group norm.
@@ -1216,6 +1204,7 @@ class MaskHeadSmallConv(nn.Module):
         self.lay5 = torch.nn.Conv2d(inter_dims[3], inter_dims[4], 3, padding=1)
         self.gn5 = torch.nn.GroupNorm(8, inter_dims[4])
         self.out_lay = torch.nn.Conv2d(inter_dims[4], 1, 3, padding=1)
+        self.out_lay2 = torch.nn.Conv2d(inter_dims[1], 1, 3, padding=1)
 
         self.dim = dim
 
@@ -1228,7 +1217,7 @@ class MaskHeadSmallConv(nn.Module):
                 nn.init.kaiming_uniform_(m.weight, a=1)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x, bbox_mask, fpns):
+    def forward(self, x, bbox_mask, fpns, intermediate=False):
         x = torch.cat(
             [_expand(x, bbox_mask.shape[1]),
              bbox_mask.flatten(0, 1)], 1)
@@ -1239,6 +1228,9 @@ class MaskHeadSmallConv(nn.Module):
         x = self.lay2(x)
         x = self.gn2(x)
         x = F.relu(x)
+
+        if intermediate:
+            return self.out_lay2(x)
 
         cur_fpn = self.adapter1(fpns[0])
         if cur_fpn.size(0) != x.size(0):
