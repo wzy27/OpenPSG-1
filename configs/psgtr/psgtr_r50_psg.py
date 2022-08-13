@@ -101,12 +101,17 @@ predicate_classes = [
 ]
 
 model = dict(bbox_head=dict(
+    type='MyHead',
     num_classes=len(object_classes),
     num_relations=len(predicate_classes),
     object_classes=object_classes,
     predicate_classes=predicate_classes,
     use_mask=True,
     num_query=100,
+    transformer=dict(decoder=dict(transformerlayers=dict(
+        operation_order=('cross_attn', 'norm',
+                        'self_attn', 'norm', 'ffn',
+                        'norm')),))
 ), )
 
 img_norm_cfg = dict(mean=[123.675, 116.28, 103.53],
