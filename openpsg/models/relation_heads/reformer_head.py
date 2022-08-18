@@ -133,6 +133,7 @@ class ReformerHead(MaskFormerHead):
         self.num_relation_decoder1_layers = relation_decoder1.num_layers
         self.num_relation_decoder2_layers = relation_decoder2.num_layers
 
+        self.proj_query = nn.Linear(feat_channels*3, feat_channels)
         self.rel_embed = nn.Sequential(
             nn.Linear(feat_channels, feat_channels), nn.ReLU(inplace=True),
             nn.Linear(feat_channels, num_relations + 1)
@@ -472,11 +473,16 @@ class ReformerHead(MaskFormerHead):
         norm_rel_query = F.normalize(rel_query_feat.squeeze(1))
         similarity = norm_rel_query * norm_query.T
 
-        filter_object = torch.topk(similarity, 4, dim=1)
-        for object_ind_list in filter_object.indices:
-            # make so_pairs and add info
-            # create new query/key/value for next decoder
-            pass
+        num_select = 4
+        filter_object = torch.topk(similarity, num_select, dim=1)
+        for k, r_query in enumerate(rel_query_feat):
+            for i in range(num_select):
+                for j in range(i+1, num_select):
+                    sub_idx = filter_object.indices[k, i]
+                    obj_idx = filter_object.indices[k, j]
+
+                    updated_query_feat = (query_feat[sub_idx], query_feat[obj_idx], r_query)
+
 
         # decoder2, 9layers
         # add object masks info as attn_mask? Too strong prior?
