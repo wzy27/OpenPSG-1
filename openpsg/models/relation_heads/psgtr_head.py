@@ -1,7 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import time
 from collections import defaultdict
-from inspect import signature
 
 import torch
 import torch.nn as nn
@@ -1100,8 +1098,8 @@ class MaskHeadSmallConv(nn.Module):
             dim, context_dim // 2, context_dim // 4, context_dim // 8,
             context_dim // 16, context_dim // 64
         ]
-        self.lay1 = torch.nn.Conv2d(dim, dim, 3, padding=1)
-        self.gn1 = torch.nn.GroupNorm(8, dim)
+        self.lay1 = nn.Conv2d(dim, dim, 3, padding=1)
+        self.gn1 = nn.GroupNorm(8, dim)
         self.lay2 = torch.nn.Conv2d(dim, inter_dims[1], 3, padding=1)
         self.gn2 = torch.nn.GroupNorm(8, inter_dims[1])
         self.lay3 = torch.nn.Conv2d(inter_dims[1], inter_dims[2], 3, padding=1)

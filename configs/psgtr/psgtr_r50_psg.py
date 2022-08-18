@@ -3,6 +3,8 @@ _base_ = [
     '../_base_/custom_runtime.py'
 ]
 
+find_unused_parameters = True
+
 custom_imports = dict(imports=[
     'openpsg.models.frameworks.psgtr', 'openpsg.models.losses.seg_losses',
     'openpsg.models.relation_heads.psgtr_head', 'openpsg.datasets',
@@ -101,17 +103,18 @@ predicate_classes = [
 ]
 
 model = dict(bbox_head=dict(
-    type='MyHead',
+    # type='PsgMaskHead',
+    type='PSGTrHead',
     num_classes=len(object_classes),
     num_relations=len(predicate_classes),
     object_classes=object_classes,
     predicate_classes=predicate_classes,
     use_mask=True,
     num_query=100,
-    transformer=dict(decoder=dict(transformerlayers=dict(
-        operation_order=('cross_attn', 'norm',
-                        'self_attn', 'norm', 'ffn',
-                        'norm')),))
+    # transformer=dict(decoder=dict(transformerlayers=dict(
+    #     operation_order=('cross_attn', 'norm',
+    #                     'self_attn', 'norm', 'ffn',
+    #                     'norm')),))
 ), )
 
 img_norm_cfg = dict(mean=[123.675, 116.28, 103.53],
@@ -236,3 +239,4 @@ log_config = dict(
 )
 
 load_from = 'work_dirs/checkpoints/detr_pan_r50.pth'
+# load_from = 'work_dirs/checkpoints/psgtr_mask_dict.pth'
